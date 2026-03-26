@@ -127,6 +127,12 @@ var (
 	osRe        = regexp.MustCompile(`^([A-Za-z0-9_-]+)(?:\(([A-Za-z0-9_.%-]*)((?:\+[A-Za-z0-9_.%-]+)*)\))?$`)
 )
 
+const (
+	maxFeatures     = 16
+	maxFeatureLen   = 64
+	maxOSOptionsLen = 256
+)
+
 // Platform is a type alias for convenience, so there is no need to import image-spec package everywhere.
 type Platform = specs.Platform
 
@@ -346,12 +352,21 @@ func parseOSFeatures(s string) ([]string, error) {
 	if s == "" {
 		return nil, nil
 	}
+	if len(s) > maxOSOptionsLen {
+		return nil, fmt.Errorf("os features too long: %w", errInvalidArgument)
+	}
 
-	var features []string
+	features := make([]string, 0, min(strings.Count(s, "+")+1, maxFeatures))
 	for raw := range strings.SplitSeq(s, "+") {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			return nil, fmt.Errorf("empty os feature: %w", errInvalidArgument)
+		}
+		if len(features) == maxFeatures {
+			return nil, fmt.Errorf("too many os features: %w", errInvalidArgument)
+		}
+		if len(raw) > maxFeatureLen {
+			return nil, fmt.Errorf("os feature too long: %w", errInvalidArgument)
 		}
 		feature, err := decodeOSOption(raw)
 		if err != nil {
@@ -416,7 +431,7 @@ func FormatAll(platform specs.Platform) string {
 }
 
 func formatOSFeatures(features []string) string {
-	if len(features) == 0 {
+	if len(features) == 0 || len(features) > maxFeatures {
 		return ""
 	}
 
@@ -428,15 +443,28 @@ func formatOSFeatures(features []string) string {
 	var wrote bool
 	var prev string
 	for _, f := range features {
+		if len(f) > maxFeatureLen {
+			// invalid
+			return ""
+		}
 		if f == "" || f == prev {
 			// skip empty and duplicate values
 			continue
 		}
 		prev = f
+
+		encoded := encodeOSOption(f)
+		if b.Len()+len(encoded) > maxOSOptionsLen {
+			return ""
+		}
+
 		if wrote {
+			if b.Len()+1 > maxOSOptionsLen {
+				return ""
+			}
 			b.WriteByte('+')
 		}
-		b.WriteString(encodeOSOption(f))
+		b.WriteString(encoded)
 		wrote = true
 	}
 	return b.String()
